@@ -1,24 +1,48 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
+// ══════════════════════════════════════════════════════════════
+//  DATA MODEL
+// ══════════════════════════════════════════════════════════════
 class SquatSession {
   final DateTime date;
   final int sets;
   final int reps;
   final String exercise;
+  /// Extra barbell/dumbbell weight added (kg). 0 = bodyweight only.
+  final double addedWeightKg;
+  /// User's body weight at time of session (kg).
+  final double bodyWeightKg;
 
   SquatSession({
     required this.date,
     required this.sets,
     required this.reps,
     required this.exercise,
+    this.addedWeightKg = 0,
+    this.bodyWeightKg = 70,
   });
+
+  /// Total load moved per rep (kg)
+  double get totalWeightKg => bodyWeightKg + addedWeightKg;
+
+  /// Estimated calories burned using MET formula.
+  /// MET for weighted squats ≈ 5 + 0.02 per extra kg (rough heuristic)
+  /// kcal = MET × bodyWeight(kg) × duration(h)
+  /// We estimate duration as reps × 3 seconds per rep.
+  double get estimatedKcal {
+    final met = 5.0 + (addedWeightKg * 0.02).clamp(0, 3);
+    final durationHours = (reps * 3) / 3600;
+    return met * bodyWeightKg * durationHours;
+  }
 
   Map<String, dynamic> toJson() => {
     'date': date.toIso8601String(),
     'sets': sets,
     'reps': reps,
     'exercise': exercise,
+    'addedWeightKg': addedWeightKg,
+    'bodyWeightKg': bodyWeightKg,
   };
 
   factory SquatSession.fromJson(Map<String, dynamic> json) => SquatSession(
@@ -26,36 +50,46 @@ class SquatSession {
     sets: json['sets'],
     reps: json['reps'],
     exercise: json['exercise'],
+    addedWeightKg: (json['addedWeightKg'] as num?)?.toDouble() ?? 0,
+    bodyWeightKg: (json['bodyWeightKg'] as num?)?.toDouble() ?? 70,
   );
 }
 
+// ══════════════════════════════════════════════════════════════
+//  STORAGE SERVICE
+// ══════════════════════════════════════════════════════════════
 class StorageService {
   final SharedPreferences _prefs;
 
-  static const _sessionsKey = 'squat_sessions';
-  static const _repGoalKey = 'rep_goal';
-  static const _setGoalKey = 'set_goal';
-  static const _stepsKey = 'daily_steps';
-  static const _currentSetsKey = 'current_sets';
-  static const _currentRepsKey = 'current_reps';
+  static const _sessionsKey      = 'squat_sessions';
+  static const _repGoalKey       = 'rep_goal';
+  static const _setGoalKey       = 'set_goal';
+  static const _stepsKey         = 'daily_steps';
+  static const _bodyWeightKey    = 'body_weight_kg';
+  static const _restThresholdKey = 'rest_threshold_ms';
 
   StorageService(this._prefs);
 
-  // ── Goals ──────────────────────────────────────────────
+  // ── Goals ─────────────────────────────────────────────────
   int get repGoal => _prefs.getInt(_repGoalKey) ?? 10;
   int get setGoal => _prefs.getInt(_setGoalKey) ?? 3;
+  Future<void> setRepGoal(int v) => _prefs.setInt(_repGoalKey, v);
+  Future<void> setSetGoal(int v) => _prefs.setInt(_setGoalKey, v);
 
-  Future<void> setRepGoal(int value) => _prefs.setInt(_repGoalKey, value);
-  Future<void> setSetGoal(int value) => _prefs.setInt(_setGoalKey, value);
+  // ── Body weight ────────────────────────────────────────────
+  double get bodyWeightKg =>
+      (_prefs.getDouble(_bodyWeightKey) ?? 70.0);
+  Future<void> setBodyWeightKg(double v) =>
+      _prefs.setDouble(_bodyWeightKey, v);
 
-  // ── Current session live counters ──────────────────────
-  int get currentSets => _prefs.getInt(_currentSetsKey) ?? 0;
-  int get currentReps => _prefs.getInt(_currentRepsKey) ?? 0;
+  // ── Rest threshold ─────────────────────────────────────────
+  /// In milliseconds. Default 5 000 ms (5 s).
+  int get restThresholdMs =>
+      _prefs.getInt(_restThresholdKey) ?? 5000;
+  Future<void> setRestThresholdMs(int v) =>
+      _prefs.setInt(_restThresholdKey, v);
 
-  Future<void> setCurrentSets(int v) => _prefs.setInt(_currentSetsKey, v);
-  Future<void> setCurrentReps(int v) => _prefs.setInt(_currentRepsKey, v);
-
-  // ── Sessions ───────────────────────────────────────────
+  // ── Sessions ───────────────────────────────────────────────
   List<SquatSession> getSessions() {
     final raw = _prefs.getStringList(_sessionsKey) ?? [];
     return raw
@@ -73,98 +107,110 @@ class StorageService {
 
   Future<void> clearSessions() async {
     await _prefs.remove(_sessionsKey);
-    await _prefs.remove(_currentSetsKey);
-    await _prefs.remove(_currentRepsKey);
   }
 
-  // ── Filtered sessions ──────────────────────────────────
+  // ── Filtered sessions ──────────────────────────────────────
   List<SquatSession> getFilteredSessions(String filter) {
     final all = getSessions();
     final now = DateTime.now();
     switch (filter) {
       case 'Today':
-        return all
-            .where((s) =>
-        s.date.year == now.year &&
-            s.date.month == now.month &&
-            s.date.day == now.day)
-            .toList();
+        return _forDate(all, now);
       case 'Weekly':
-        final weekAgo = now.subtract(const Duration(days: 7));
-        return all.where((s) => s.date.isAfter(weekAgo)).toList();
+        final ago = now.subtract(const Duration(days: 7));
+        return all.where((s) => s.date.isAfter(ago)).toList();
       case 'Monthly':
-        final monthAgo = DateTime(now.year, now.month - 1, now.day);
-        return all.where((s) => s.date.isAfter(monthAgo)).toList();
+        final ago = DateTime(now.year, now.month - 1, now.day);
+        return all.where((s) => s.date.isAfter(ago)).toList();
       case 'Yearly':
-        final yearAgo = DateTime(now.year - 1, now.month, now.day);
-        return all.where((s) => s.date.isAfter(yearAgo)).toList();
+        final ago = DateTime(now.year - 1, now.month, now.day);
+        return all.where((s) => s.date.isAfter(ago)).toList();
       default:
         return all;
     }
   }
 
-  // ── Progress (0.0 - 1.0) ──────────────────────────────
-  double getTodayProgress() {
-    final today = getFilteredSessions('Today');
-    if (today.isEmpty) return 0.0;
-    final totalReps = today.fold(0, (sum, s) => sum + s.reps);
-    final totalSets = today.fold(0, (sum, s) => sum + s.sets);
-    final repProgress = totalReps / (repGoal * setGoal).clamp(1, 999);
-    final setProgress = totalSets / setGoal.clamp(1, 999);
-    return ((repProgress + setProgress) / 2).clamp(0.0, 1.0);
+  /// Sessions for a specific calendar date.
+  List<SquatSession> getSessionsForDate(DateTime date) =>
+      _forDate(getSessions(), date);
+
+  List<SquatSession> _forDate(List<SquatSession> all, DateTime d) =>
+      all
+          .where((s) =>
+      s.date.year == d.year &&
+          s.date.month == d.month &&
+          s.date.day == d.day)
+          .toList();
+
+  // ── Progress ───────────────────────────────────────────────
+  double getTodayProgress(int extraReps, int extraSets) {
+    final today = getSessionsForDate(DateTime.now());
+    final totalReps =
+        today.fold(0, (s, e) => s + e.reps) + extraReps;
+    final totalSets =
+        today.fold(0, (s, e) => s + e.sets) + extraSets;
+    final rProg = totalReps / (repGoal * setGoal).clamp(1, 9999);
+    final sProg = totalSets / setGoal.clamp(1, 9999);
+    return ((rProg + sProg) / 2).clamp(0.0, 1.0);
   }
 
-  // ── Weekly squat counts for bar chart ─────────────────
-  Map<String, int> getWeeklySquatCounts() {
+  // ── Weekly squat counts for the week containing [anchor] ───
+  Map<String, int> getWeeklySquatCounts({
+    DateTime? anchor,
+    int extraRepsToday = 0,
+  }) {
     final all = getSessions();
-    final now = DateTime.now();
-    final Map<String, int> result = {
-      'Mon': 0,
-      'Tue': 0,
-      'Wed': 0,
-      'Thu': 0,
-      'Fri': 0,
-      'Sat': 0,
-      'Sun': 0,
-    };
-    final days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    final ref = anchor ?? DateTime.now();
+    // Monday of the week containing ref
+    final monday = ref.subtract(Duration(days: ref.weekday - 1));
+    final mondayDate = DateTime(monday.year, monday.month, monday.day);
 
-    for (final session in all) {
-      final diff = now.difference(session.date).inDays;
-      if (diff < 7) {
-        // weekday: 1=Mon ... 7=Sun
-        final dayName = days[session.date.weekday - 1];
-        result[dayName] = (result[dayName] ?? 0) + session.reps;
+    final labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    final result = {for (var l in labels) l: 0};
+
+    for (final s in all) {
+      final diff = s.date.difference(mondayDate).inDays;
+      if (diff >= 0 && diff < 7) {
+        final label = labels[diff];
+        result[label] = result[label]! + s.reps;
       }
     }
+
+    // Add live reps to today's slot only if today falls in this week
+    if (extraRepsToday > 0) {
+      final today = DateTime.now();
+      final todayDiff = today.difference(mondayDate).inDays;
+      if (todayDiff >= 0 && todayDiff < 7) {
+        final todayLabel = labels[today.weekday - 1];
+        result[todayLabel] = result[todayLabel]! + extraRepsToday;
+      }
+    }
+
     return result;
   }
 
-  // ── Steps ──────────────────────────────────────────────
+  // ── Steps ──────────────────────────────────────────────────
   Future<void> saveSteps(int steps) async {
-    final key = '${_stepsKey}_${_todayKey()}';
-    await _prefs.setInt(key, steps);
+    await _prefs.setInt('${_stepsKey}_${_todayKey()}', steps);
   }
 
-  int getTodaySteps() {
-    return _prefs.getInt('${_stepsKey}_${_todayKey()}') ?? 0;
-  }
+  int getTodaySteps() =>
+      _prefs.getInt('${_stepsKey}_${_todayKey()}') ?? 0;
+
+  int getStepsForDate(DateTime d) =>
+      _prefs.getInt('${_stepsKey}_${d.year}_${d.month}_${d.day}') ?? 0;
 
   String _todayKey() {
-    final now = DateTime.now();
-    return '${now.year}_${now.month}_${now.day}';
+    final n = DateTime.now();
+    return '${n.year}_${n.month}_${n.day}';
   }
 
-  // ── kCal from steps (rough estimate: 0.04 kcal/step) ──
-  double getKCalFromSteps(int steps) {
-    return steps * 0.04;
-  }
+  // ── kCal from steps ────────────────────────────────────────
+  double getKCalFromSteps(int steps) => steps * 0.04;
 
-  // ── Import / Export ────────────────────────────────────
-  String exportData() {
-    final sessions = getSessions();
-    return jsonEncode(sessions.map((s) => s.toJson()).toList());
-  }
+  // ── Import / Export ────────────────────────────────────────
+  String exportData() =>
+      jsonEncode(getSessions().map((s) => s.toJson()).toList());
 
   Future<bool> importData(String jsonStr) async {
     try {

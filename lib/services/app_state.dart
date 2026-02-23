@@ -9,6 +9,8 @@ class AppState extends ChangeNotifier {
   final StorageService storage;
 
   AppState(this.storage) {
+    // Sync detector threshold from saved prefs
+    _detector.setBreakThresholdMs = storage.restThresholdMs;
     _initPedometer();
   }
 
@@ -18,15 +20,12 @@ class AppState extends ChangeNotifier {
   bool _isTracking = false;
   bool get isTracking => _isTracking;
 
-  /// Reps in the current set (resets on set break)
   int _currentSetReps = 0;
   int get currentSetReps => _currentSetReps;
 
-  /// Completed sets in this session
   int _liveSets = 0;
   int get liveSets => _liveSets;
 
-  /// Total reps across all sets in this session
   int _liveReps = 0;
   int get liveReps => _liveReps;
 
@@ -38,8 +37,61 @@ class AppState extends ChangeNotifier {
 
   Timer? _breakTimer;
 
+  // ── Weight for current session ─────────────────────────
+  /// Extra weight added (barbell, vest, etc.) in kg
+  double _addedWeightKg = 0;
+  double get addedWeightKg => _addedWeightKg;
+
+  void setAddedWeight(double kg) {
+    _addedWeightKg = kg;
+    notifyListeners();
+  }
+
+  double get totalSessionWeightKg => storage.bodyWeightKg + _addedWeightKg;
+
+  /// Estimated kcal for the current live session
+  double get liveSessionKcal {
+    if (_liveReps == 0) return 0;
+    final met = 5.0 + (_addedWeightKg * 0.02).clamp(0, 3);
+    final durationHours = (_liveReps * 3) / 3600;
+    return met * storage.bodyWeightKg * durationHours;
+  }
+
   // ════════════════════════════════════════════════════════
-  //  FILTER
+  //  DATE SELECTION (for Activities screen)
+  // ════════════════════════════════════════════════════════
+  DateTime _selectedDate = DateTime.now();
+  DateTime get selectedDate => _selectedDate;
+
+  bool get isSelectedDateToday {
+    final now = DateTime.now();
+    return _selectedDate.year == now.year &&
+        _selectedDate.month == now.month &&
+        _selectedDate.day == now.day;
+  }
+
+  void selectDate(DateTime d) {
+    _selectedDate = d;
+    notifyListeners();
+  }
+
+  List<SquatSession> get sessionsForSelectedDate =>
+      storage.getSessionsForDate(_selectedDate);
+
+  int get selectedDateReps =>
+      sessionsForSelectedDate.fold(0, (s, e) => s + e.reps) +
+          (isSelectedDateToday && isTracking ? _liveReps : 0);
+
+  int get selectedDateSets =>
+      sessionsForSelectedDate.fold(0, (s, e) => s + e.sets) +
+          (isSelectedDateToday && isTracking ? _liveSets : 0);
+
+  double get selectedDateKcal =>
+      sessionsForSelectedDate.fold(0.0, (s, e) => s + e.estimatedKcal) +
+          (isSelectedDateToday && isTracking ? liveSessionKcal : 0);
+
+  // ════════════════════════════════════════════════════════
+  //  FILTER (Tracking screen history tabs)
   // ════════════════════════════════════════════════════════
   String _filter = 'All';
   String get filter => _filter;
@@ -53,44 +105,44 @@ class AppState extends ChangeNotifier {
   //  AGGREGATE STATS
   // ════════════════════════════════════════════════════════
   int get totalSets {
-    final s = storage.getFilteredSessions(_filter);
-    final hist = s.fold(0, (sum, e) => sum + e.sets);
+    final hist = storage.getFilteredSessions(_filter).fold(0, (s, e) => s + e.sets);
     return isTracking ? hist + _liveSets : hist;
   }
 
   int get totalReps {
-    final s = storage.getFilteredSessions(_filter);
-    final hist = s.fold(0, (sum, e) => sum + e.reps);
+    final hist = storage.getFilteredSessions(_filter).fold(0, (s, e) => s + e.reps);
     return isTracking ? hist + _liveReps : hist;
   }
 
   int get todaySets {
-    final s = storage.getFilteredSessions('Today');
-    final hist = s.fold(0, (sum, e) => sum + e.sets);
+    final hist = storage.getSessionsForDate(DateTime.now()).fold(0, (s, e) => s + e.sets);
     return isTracking ? hist + _liveSets : hist;
   }
 
   int get todayReps {
-    final s = storage.getFilteredSessions('Today');
-    final hist = s.fold(0, (sum, e) => sum + e.reps);
+    final hist = storage.getSessionsForDate(DateTime.now()).fold(0, (s, e) => s + e.reps);
     return isTracking ? hist + _liveReps : hist;
   }
 
-  double get progress {
-    final goal = (storage.repGoal * storage.setGoal).clamp(1, 9999);
-    final sGoal = storage.setGoal.clamp(1, 9999);
-    final rProg = todayReps / goal;
-    final sProg = todaySets / sGoal;
-    return ((rProg + sProg) / 2).clamp(0.0, 1.0);
-  }
+  double get progress => storage.getTodayProgress(
+      isTracking ? _liveReps : 0, isTracking ? _liveSets : 0);
 
-  Map<String, int> get weeklySquats => storage.getWeeklySquatCounts();
+  Map<String, int> get weeklySquats => storage.getWeeklySquatCounts(
+    anchor: _selectedDate,
+    extraRepsToday: isTracking ? _liveReps : 0,
+  );
 
   // ════════════════════════════════════════════════════════
   //  PEDOMETER
   // ════════════════════════════════════════════════════════
   int _steps = 0;
   int get steps => _steps;
+
+  // Steps for the selected date (today uses live pedometer, past dates use stored)
+  int get selectedDateSteps {
+    if (isSelectedDateToday) return _steps;
+    return storage.getStepsForDate(_selectedDate);
+  }
   double get kcal => storage.getKCalFromSteps(_steps);
 
   String _pedometerStatus = 'initializing';
@@ -101,14 +153,12 @@ class AppState extends ChangeNotifier {
   Future<void> _initPedometer() async {
     _steps = storage.getTodaySteps();
     notifyListeners();
-
     final status = await Permission.activityRecognition.request();
     if (!status.isGranted) {
       _pedometerStatus = 'denied';
       notifyListeners();
       return;
     }
-
     _stepSub = Pedometer.stepCountStream.listen(
           (e) {
         _steps = e.steps;
@@ -130,7 +180,7 @@ class AppState extends ChangeNotifier {
   late final SquatDetectorService _detector = SquatDetectorService(
     onRep: _onRepDetected,
     onSetBreak: _onSetBreak,
-    setBreakThresholdMs: 8000, // 8-second rest → new set
+    setBreakThresholdMs: storage.restThresholdMs,
   );
 
   void _onRepDetected() {
@@ -159,7 +209,8 @@ class AppState extends ChangeNotifier {
     _lastRepTime = null;
     _msSinceLastRep = 0;
     _isTracking = true;
-
+    // Sync threshold in case user changed it
+    _detector.setBreakThresholdMs = storage.restThresholdMs;
     _detector.start();
 
     _breakTimer?.cancel();
@@ -170,14 +221,12 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       }
     });
-
     notifyListeners();
   }
 
   Future<void> stopTracking() async {
     _detector.stop();
     _breakTimer?.cancel();
-
     if (_currentSetReps > 0) _liveSets++;
 
     if (_liveReps > 0) {
@@ -186,6 +235,8 @@ class AppState extends ChangeNotifier {
         sets: _liveSets,
         reps: _liveReps,
         exercise: 'Legs',
+        addedWeightKg: _addedWeightKg,
+        bodyWeightKg: storage.bodyWeightKg,
       ));
     }
 
@@ -195,7 +246,7 @@ class AppState extends ChangeNotifier {
     _currentSetReps = 0;
     _lastRepTime = null;
     _msSinceLastRep = 0;
-
+    _addedWeightKg = 0;
     notifyListeners();
   }
 
@@ -211,10 +262,12 @@ class AppState extends ChangeNotifier {
   }
 
   // ════════════════════════════════════════════════════════
-  //  GOALS
+  //  GOALS & SETTINGS
   // ════════════════════════════════════════════════════════
   int get repGoal => storage.repGoal;
   int get setGoal => storage.setGoal;
+  double get bodyWeightKg => storage.bodyWeightKg;
+  int get restThresholdMs => storage.restThresholdMs;
 
   Future<void> updateRepGoal(int v) async {
     await storage.setRepGoal(v);
@@ -223,6 +276,17 @@ class AppState extends ChangeNotifier {
 
   Future<void> updateSetGoal(int v) async {
     await storage.setSetGoal(v);
+    notifyListeners();
+  }
+
+  Future<void> updateBodyWeight(double v) async {
+    await storage.setBodyWeightKg(v);
+    notifyListeners();
+  }
+
+  Future<void> updateRestThreshold(int ms) async {
+    await storage.setRestThresholdMs(ms);
+    _detector.setBreakThresholdMs = ms;
     notifyListeners();
   }
 
