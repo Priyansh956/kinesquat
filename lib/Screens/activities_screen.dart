@@ -244,7 +244,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                                 IntTween(begin: 0, end: state.selectedDateSteps),
                                 duration:
                                 const Duration(milliseconds: 500),
-                                builder: (_, v, __) => Text('$v',
+                                builder: (_, v, _) => Text('$v',
                                     style: const TextStyle(
                                         color: Colors.white,
                                         fontSize: 24,
@@ -285,7 +285,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                                     end: state.selectedDateSets),
                                 duration:
                                 const Duration(milliseconds: 400),
-                                builder: (_, v, __) => Text('$v',
+                                builder: (_, v, _) => Text('$v',
                                     style: const TextStyle(
                                         color: Colors.white,
                                         fontSize: 24,
@@ -326,7 +326,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                                     end: state.selectedDateReps),
                                 duration:
                                 const Duration(milliseconds: 400),
-                                builder: (_, v, __) => Text('$v',
+                                builder: (_, v, _) => Text('$v',
                                     style: const TextStyle(
                                         color: Colors.white,
                                         fontSize: 24,
@@ -401,7 +401,7 @@ class _ActivitiesScreenState extends State<ActivitiesScreen> {
                           enabled: true,
                           touchTooltipData: BarTouchTooltipData(
                             tooltipBgColor: Color(0xFF2A2A2A),
-                            getTooltipItem: (group, _, rod, __) =>
+                            getTooltipItem: (group, _, rod, _) =>
                                 BarTooltipItem(
                                   '${rod.toY.toInt()} reps',
                                   const TextStyle(

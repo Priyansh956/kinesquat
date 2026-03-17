@@ -1,7 +1,14 @@
+// squat_tracking_screen.dart  ── updated to include SquatVariationsSection
+// Changes from original:
+//   1. Import the new widget file
+//   2. Added SquatVariationsSection() at the bottom of the Column
+//      (after the Live sensor status block)
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/app_state.dart';
 import '../widgets/dark_card.dart';
+import '../widgets/squat_variations_section.dart'; // ← NEW IMPORT
 
 class SquatTrackingScreen extends StatefulWidget {
   const SquatTrackingScreen({super.key});
@@ -279,6 +286,11 @@ class _SquatTrackingScreenState extends State<SquatTrackingScreen> {
               const SizedBox(height: 12),
               _LiveStatus(state: state, restThresholdSec: restSec),
             ],
+
+            // ══════════════════════════════════════════════════════
+            // ── Squat Variations ──  ← NEW SECTION ADDED HERE ────
+            // ══════════════════════════════════════════════════════
+            const SquatVariationsSection(),
           ],
         ),
       ),
@@ -317,7 +329,6 @@ class _WeightPanelState extends State<_WeightPanel> {
               const Text('Session weight',
                   style: TextStyle(color: Colors.white, fontSize: 14)),
               const Spacer(),
-              // Toggle between bodyweight and weighted
               GestureDetector(
                 onTap: () => setState(() {
                   _addingWeight = !_addingWeight;
@@ -350,7 +361,6 @@ class _WeightPanelState extends State<_WeightPanel> {
           ),
           const SizedBox(height: 12),
           if (!_addingWeight) ...[
-            // Bodyweight mode
             Row(
               children: [
                 const Icon(Icons.person_outline,
@@ -366,11 +376,9 @@ class _WeightPanelState extends State<_WeightPanel> {
             const SizedBox(height: 4),
             const Text(
               'Rest threshold auto-applied from your settings.',
-              style:
-              TextStyle(color: Colors.white24, fontSize: 10),
+              style: TextStyle(color: Colors.white24, fontSize: 10),
             ),
           ] else ...[
-            // Weighted mode
             Row(
               children: [
                 Expanded(
@@ -400,8 +408,7 @@ class _WeightPanelState extends State<_WeightPanel> {
             const SizedBox(height: 4),
             Text(
               'Body ${widget.bodyWeight.toStringAsFixed(1)} kg + extra weight = total load',
-              style: const TextStyle(
-                  color: Colors.white24, fontSize: 10),
+              style: const TextStyle(color: Colors.white24, fontSize: 10),
             ),
           ],
         ],
@@ -439,8 +446,7 @@ class _OutlineButton extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding:
-        const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         decoration: BoxDecoration(
           border: Border.all(color: Colors.white38),
           borderRadius: BorderRadius.circular(8),
@@ -457,8 +463,7 @@ class _OutlineButton extends StatelessWidget {
 class _LiveStatus extends StatelessWidget {
   final AppState state;
   final int restThresholdSec;
-  const _LiveStatus(
-      {required this.state, required this.restThresholdSec});
+  const _LiveStatus({required this.state, required this.restThresholdSec});
 
   String _fmt(int ms) {
     final s = ms ~/ 1000;
@@ -473,8 +478,7 @@ class _LiveStatus extends StatelessWidget {
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
-      padding:
-      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         border: Border.all(
           color: inBreak
@@ -545,8 +549,8 @@ class _PulsingDotState extends State<_PulsingDot>
       child: Container(
         width: 8,
         height: 8,
-        decoration: BoxDecoration(
-            color: widget.color, shape: BoxShape.circle),
+        decoration:
+        BoxDecoration(color: widget.color, shape: BoxShape.circle),
       ),
     );
   }
