@@ -3,6 +3,8 @@
 // bottom of SquatTrackingScreen's Column (after the Live sensor status block).
 // ─────────────────────────────────────────────────────────────────────────────
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -296,6 +298,7 @@ class _VariantPreviewSheetState extends State<_VariantPreviewSheet>
   int _activeStep = 0;
   late final AnimationController _stepAnim;
   late final AnimationController _phaseAnim;
+  late Timer _autoTimer;
   bool _paused = false;
 
   static const _phaseDuration = Duration(seconds: 2);
@@ -484,7 +487,7 @@ class _VariantPreviewSheetState extends State<_VariantPreviewSheet>
                 // Auto-progress bar
                 AnimatedBuilder(
                   animation: _phaseAnim,
-                  builder: (_, _) => LinearProgressIndicator(
+                  builder: (_, __) => LinearProgressIndicator(
                     value: _paused ? null : _phaseAnim.value,
                     backgroundColor: Colors.white10,
                     valueColor: AlwaysStoppedAnimation(
